@@ -1,109 +1,126 @@
-// client.c - Cliente de prueba para la Tienda (Winsock)
-// Habla el mismo MensajeTienda de modelos.h
 #define WIN32_LEAN_AND_MEAN
-#define _WIN32_WINNT 0x0600   // o 0x0501 como mínimo
+#define _WIN32_WINNT 0x0600
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <winsock2.h>
-#include <ws2tcpip.h>
+#include <ws2tcpip.h>         // <-- inet_pton
 #include "modelos.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
+static void error(const char *msg){
+    fprintf(stderr, "Error: %s (WSA:%d)\n", msg, WSAGetLastError());
+    exit(1);
+}
+
 static int sendAll(SOCKET s, const char* buf, int len){
     int sent = 0;
-    while(sent < len){
+    while (sent < len){
         int n = send(s, buf + sent, len - sent, 0);
         if(n <= 0) return -1;
         sent += n;
-   }
+    }
     return 0;
 }
+
 static int recvAll(SOCKET s, char* buf, int len){
     int recvd = 0;
-    while(recvd < len){
+    while (recvd < len){
         int n = recv(s, buf + recvd, len - recvd, 0);
         if(n <= 0) return -1;
         recvd += n;
-   }
+    }
     return 0;
 }
 
-static void print_art(const Articulo* a){
-    printf("#%u  %-20s %-12s %-12s $%.2f  stock:%u\n",
-        a->id, a->nombre, a->marca, a->tipo,
-        a->precio_cent/100.0, a->stock);
+void buscar(SOCKET s, const char *texto){
+    MensajeTienda msg = (MensajeTienda){0};
+    msg.tipo = CMD_BUSCAR;
+    strncpy(msg.datos, texto, sizeof(msg.datos) - 1);
+    sendAll(s, (const char*)&msg, sizeof msg);
+
+    MensajeTienda resp;
+    while (1){
+        if(recvAll(s, (char*)&resp, sizeof resp) <0) break;
+        if(resp.tipo == sendEnd) break;
+        if(resp.tipo == sendItem)
+            printf("Producto: %s (%s) $%.2f Stock:%d\n",
+                   resp.articulo.nombre, resp.articulo.marca,
+                   resp.articulo.precio_cent / 100.0, resp.articulo.stock);
+    }
 }
 
-static void send_msg(SOCKET s, const MensajeTienda* m){
-    if(sendAll(s, (const char*)m, sizeof *m) < 0){
-        puts("send failed"); exit(1);
-   }
+void listar(SOCKET s, const char *tipo){
+    MensajeTienda msg = (MensajeTienda){0};
+    msg.tipo = CMD_LISTAR;
+    strncpy(msg.datos, tipo, sizeof(msg.datos) - 1);
+    sendAll(s, (const char*)&msg, sizeof msg);
+
+    MensajeTienda resp;
+    while (1){
+        if(recvAll(s, (char*)&resp, sizeof resp) <0) break;
+        if(resp.tipo == sendEnd) break;
+        if(resp.tipo == sendItem)
+            printf("Producto: %s (%s) $%.2f Stock:%d\n",
+                   resp.articulo.nombre, resp.articulo.marca,
+                   resp.articulo.precio_cent / 100.0, resp.articulo.stock);
+    }
 }
 
-// Recibe sendItem ... hasta sendEnd. Muestra lista.
-static void recv_list(SOCKET s){
-    MensajeTienda r;
-    for(;;){
-        if(recvAll(s, (char*)&r, sizeof r) < 0){ puts("recv failed"); exit(1);}
-        if(r.tipo == sendItem){ print_art(&r.articulo);}
-        else if(r.tipo == sendEnd){ puts("-- fin de lista --"); break;}
-        else if(r.tipo == sendError){ printf("ERR: %s\n", r.datos); break;}
-        else if(r.tipo == sendOK) {printf("OK: %s\n", r.datos);} // por si el server manda status
-        else{printf("(ignorado tipo=%d)\n", r.tipo);}
-   }
+void agregar(SOCKET s, int id, int cantidad){
+    MensajeTienda msg = (MensajeTienda){0};
+    msg.tipo = CMD_ADD;
+    msg.id_articulo = id;
+    msg.cantidad = cantidad;
+    sendAll(s, (const char*)&msg, sizeof msg);
+
+    MensajeTienda resp;
+    if(recvAll(s, (char*)&resp, sizeof resp) <0) return;
+    printf("%s\n", resp.datos);
 }
 
-// Recibe OK/ERR y, si aplica, un TICKET
-static void recv_status_or_ticket(SOCKET s){
-    MensajeTienda r;
-    if(recvAll(s,(char*)&r,sizeof r) < 0){ puts("recv failed"); exit(1);}
-    if(r.tipo == sendOK)  printf("OK: %s\n", r.datos);
-    else if(r.tipo == sendError){ printf("ERR: %s\n", r.datos); return;}
-    else{printf("(tipo inesperado: %d)\n", r.tipo); return;}
+void finalizar(SOCKET s){
+    MensajeTienda msg = (MensajeTienda){0};
+    msg.tipo = CMD_CHECK;
+    sendAll(s, (const char*)&msg, sizeof msg);
 
-    // Si servidor envía ticket después del OK
-    if(recvAll(s,(char*)&r,sizeof r) == 0 && r.tipo == sendTicket){
-        printf("== TICKET ==\nFolio: %u\nTotal: $%.2f\n", r.folio, r.total_cent/100.0);
-   }
+    MensajeTienda resp;
+    while (1){
+        if(recvAll(s, (char*)&resp, sizeof resp) <0) break;
+        if(resp.tipo == sendOK)
+            printf("%s\n", resp.datos);
+        else if(resp.tipo == sendTicket)
+            printf("Folio: %u | Total: $%.2f\n", resp.folio, resp.total_cent / 100.0); // %u mejor para uint32_t
+        else break;
+    }
 }
 
-int main(int argc, char** argv){
-    if(argc < 3){ printf("uso: %s host puerto\n", argv[0]); return 1;}
+int main(int argc, char *argv[]){
+    if(argc < 3){
+        printf("Uso: %s <IP> <PUERTO>\n", argv[0]);
+        return 1;
+    }
 
-    WSADATA wsa; if(WSAStartup(MAKEWORD(2,2), &wsa)!=0){ puts("WSAStartup fail"); return 1;}
+    WSADATA wsa; if(WSAStartup(MAKEWORD(2,2), &wsa) != 0) error("WSAStartup");
 
-    struct addrinfo hints={0}, *res;
-    hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
-    if(getaddrinfo(argv[1], argv[2], &hints, &res)!=0){ puts("getaddrinfo fail"); return 1;}
+    SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    if(s == INVALID_SOCKET) error("socket");
 
-    SOCKET s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if(s == INVALID_SOCKET){ puts("socket fail"); return 1;}
-    if(connect(s, res->ai_addr, (int)res->ai_addrlen) != 0){ puts("connect fail"); return 1;}
-    freeaddrinfo(res);
+    struct sockaddr_in srv; memset(&srv, 0, sizeof srv); // <-- limpia la estructura
+    srv.sin_family = AF_INET;
+    srv.sin_port = htons((u_short)atoi(argv[2]));
+    if(inet_pton(AF_INET, argv[1], &srv.sin_addr) != 1) error("inet_pton");
 
-    MensajeTienda m; memset(&m,0,sizeof m);
+    if(connect(s, (struct sockaddr*)&srv, sizeof(srv)) == SOCKET_ERROR) error("connect");
 
-    puts("1) BUSCAR texto='Lap'");
-    m.tipo = CMD_BUSCAR; strcpy(m.datos, "Lap");
-    send_msg(s,&m); recv_list(s);
+    printf("Conectado al servidor.\n");
 
-    puts("\n2) LISTAR tipo='Electronica'");
-    memset(&m,0,sizeof m);
-    m.tipo = CMD_LISTAR; strcpy(m.datos,"Electronica");
-    send_msg(s,&m); recv_list(s);
-
-    puts("\n3) ADD id=1 cantidad=2");
-    memset(&m,0,sizeof m);
-    m.tipo = CMD_ADD; m.id_articulo = 1; m.cantidad = 2;
-    send_msg(s,&m); recv_status_or_ticket(s);
-
-    puts("\n4) CHECKOUT");
-    memset(&m,0,sizeof m);
-    m.tipo = CMD_CHECK;
-    send_msg(s,&m); recv_status_or_ticket(s);
+    buscar(s, "Laptop");
+    listar(s, "Electronica");
+    agregar(s, 1, 2);
+    finalizar(s);
 
     closesocket(s);
     WSACleanup();

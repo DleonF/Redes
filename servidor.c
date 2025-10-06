@@ -1,5 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
-#define _WIN32_WINNT 0x0600   //0x0501 min
+#define _WIN32_WINNT 0x0600 
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +14,6 @@
 
 static Articulo articulos[MAX_ARTICULOS];
 static int cant_articulos = 0;
-
 
 static void error(const char *msg){ fprintf(stderr, "Error: %s (WSA:%d)\n", msg, WSAGetLastError()); exit(1);}
 
@@ -34,46 +33,50 @@ static int recvAll(SOCKET s, char* buf, int len){
         int n = recv(s, buf + recvd, len - recvd, 0);
         if(n <= 0) return -1;
         recvd += n;
-   }
+    }
     return 0;
 }
 
 /* ---------------- Datos de ejemplo ---------------- */
 static void inicializar_datos(void){
-    Articulo a1 = {1, "Laptop Gamer", "Dell", "Electronica", 1500000, 5};   // $15000.00
-    Articulo a2 = {2, "Mouse Inalambrico", "Logitech", "Electronica", 30000, 10};
-    Articulo a3 = {3, "El Principito", "Penguin", "Libros", 25000, 8};
+    Articulo a1 = (Articulo){1, "Laptop Gamer", "Dell", "Electronica", 1500000, 5};   // $15000.00
+    Articulo a2 = (Articulo){2, "Mouse Inalambrico", "Logitech", "Electronica", 30000, 10};
+    Articulo a3 = (Articulo){3, "El Principito", "Penguin", "Libros", 25000, 8};
     articulos[0] = a1; articulos[1] = a2; articulos[2] = a3;
     cant_articulos = 3;
 }
 
-/* ---------------- Respuestas ---------------- */
-static void sendItem(SOCKET s, const Articulo* a){
-    MensajeTienda r = {0};
+/* ---------------- Respuestas (renombradas) ---------------- */
+static void sendItemMsg(SOCKET s, const Articulo* a){
+    MensajeTienda r = (MensajeTienda){0};
     r.tipo = sendItem;
     r.articulo = *a;
     sendAll(s, (const char*)&r, sizeof r);
 }
 
-static void sendEnd(SOCKET s){
-    MensajeTienda r = {0}; r.tipo = sendEnd;
+static void sendEndMsg(SOCKET s){
+    MensajeTienda r = (MensajeTienda){0};
+    r.tipo = sendEnd;
     sendAll(s, (const char*)&r, sizeof r);
 }
 
-static void sendOK(SOCKET s, const char* texto){
-    MensajeTienda r = {0}; r.tipo = sendOK;
+static void sendOKMsg(SOCKET s, const char* texto){
+    MensajeTienda r = (MensajeTienda){0};
+    r.tipo = sendOK;
     strncpy(r.datos, texto, sizeof r.datos - 1);
     sendAll(s, (const char*)&r, sizeof r);
 }
 
-static void sendError(SOCKET s, const char* texto){
-    MensajeTienda r = {0}; r.tipo = sendError;
+static void sendErrorMsg(SOCKET s, const char* texto){
+    MensajeTienda r = (MensajeTienda){0};
+    r.tipo = sendError;
     strncpy(r.datos, texto, sizeof r.datos - 1);
     sendAll(s, (const char*)&r, sizeof r);
 }
 
-static void sendTicket(SOCKET s, uint32_t folio, uint32_t total_cent){
-    MensajeTienda r = {0}; r.tipo = sendTicket;
+static void sendTicketMsg(SOCKET s, uint32_t folio, uint32_t total_cent){
+    MensajeTienda r = (MensajeTienda){0};
+    r.tipo = sendTicket;
     r.folio = folio; r.total_cent = total_cent;
     sendAll(s, (const char*)&r, sizeof r);
 }
@@ -83,20 +86,20 @@ static void buscar_articulos(SOCKET cli, const char *texto){
     printf("Buscando: %s\n", texto);
     for(int i=0; i < cant_articulos; i++){
         if(strstr(articulos[i].nombre, texto) || strstr(articulos[i].marca, texto)){
-            sendItem(cli, &articulos[i]);
+            sendItemMsg(cli, &articulos[i]);
         }
     }
-    sendEnd(cli);
+    sendEndMsg(cli);
 }
 
 static void listarTipo(SOCKET cli, const char *tipo){
     printf("Listando tipo: %s\n", tipo);
     for(int i=0; i < cant_articulos; i++){
         if(strcmp(articulos[i].tipo, tipo) == 0){
-            sendItem(cli, &articulos[i]);
+            sendItemMsg(cli, &articulos[i]);
         }
     }
-    sendEnd(cli);
+    sendEndMsg(cli);
 }
 
 // Carrito simple en servidor por conexión
@@ -115,7 +118,7 @@ static int carritoEdit(Carrito* c, uint32_t id, uint16_t cantidad){
 
     for(int i=0;i<c->n;i++){
         if(c->it[i].id==id){
-            if(cantidad==0){ // eliminar
+            if(cantidad==0){
                 for(int j=i;j<c->n-1;j++) c->it[j]=c->it[j+1];
                 c->n--;
             } else c->it[i].cantidad = cantidad;
@@ -158,18 +161,18 @@ static void mensajeAtender(SOCKET cli, MensajeTienda *msg, Carrito* cart){
         case CMD_ADD: {
             printf("ADD/EDIT ID:%d Q:%d\n", msg->id_articulo, msg->cantidad);
             int rc = carritoEdit(cart, (uint32_t)msg->id_articulo, (uint16_t)msg->cantidad);
-            if(rc==0) sendOK(cli,"Carrito actualizado");
-            else if(rc==1) sendError(cli,"Producto no existe");
-            else sendError(cli,"Stock insuficiente");
+            if(rc==0) sendOKMsg(cli,"Carrito actualizado");
+            else if(rc==1) sendErrorMsg(cli,"Producto no existe");
+            else sendErrorMsg(cli,"Stock insuficiente");
         } break;
         case CMD_CHECK: {
             uint32_t total=0; int rc = checkout(cart, &total);
-            if(rc==0){ sendOK(cli,"Compra exitosa"); sendTicket(cli, 12345, total);}
-            else if(rc==1) sendError(cli,"Producto no existe");
-            else sendError(cli,"Stock insuficiente");
+            if(rc==0){ sendOKMsg(cli,"Compra exitosa"); sendTicketMsg(cli, 12345, total);}
+            else if(rc==1) sendErrorMsg(cli,"Producto no existe");
+            else sendErrorMsg(cli,"Stock insuficiente");
         } break;
         default:
-            sendError(cli, "Tipo de mensaje desconocido");
+            sendErrorMsg(cli, "Tipo de mensaje desconocido");
     }
 }
 
@@ -202,19 +205,18 @@ int main(int argc, char *argv[]){
         if(c == INVALID_SOCKET){ fprintf(stderr,"accept falló\n"); continue;}
 
         printf("Cliente conectado\n");
-        Carrito cart = {0};
+        Carrito cart = (Carrito){0};
 
         MensajeTienda msg;
         while (1){
-            if(recvAll(c, (char*)&msg, sizeof msg) < 0) break;
+            if(recvAll(c, (char*)&msg, sizeof msg) <0) break;
             mensajeAtender(c, &msg, &cart);
-       }
+        }
         closesocket(c);
         printf("Cliente desconectado\n");
-   }
+    }
 
     closesocket(s);
     WSACleanup();
     return 0;
 }
-
