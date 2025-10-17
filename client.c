@@ -127,7 +127,7 @@ void verCarrito(SOCKET s) {
     }
     
     if (!tiene_items) {
-        printf("Carrito vacío\n");
+        printf("Carrito vacio\n");
         printf("==================\n\n");
         return;
     }
