@@ -149,6 +149,40 @@ static int checkout(Carrito* c, uint32_t* total_cent){
     return 0;
 }
 
+static void mostrarCarrito(SOCKET cli, Carrito* c) {
+    uint32_t total_general = 0;
+    
+    printf("Mostrando carrito (%d items)\n", c->n);
+    
+    for(int i = 0; i < c->n; i++) {
+        Articulo* a = buscarArt(c->it[i].id);
+        if(a) {
+            uint32_t total_articulo = a->precio_cent * c->it[i].cantidad;
+            total_general += total_articulo;
+            
+            // Enviar item del carrito
+            MensajeTienda r = (MensajeTienda){0};
+            r.tipo = sendCartItem;
+            r.articulo = *a;
+            r.cantidad = c->it[i].cantidad;
+            r.total_articulo = total_articulo; // Total para este artículo
+            sendAll(cli, (const char*)&r, sizeof r);
+            
+            printf("  ID:%d %s x%d = $%.2f\n", 
+                   a->id, a->nombre, c->it[i].cantidad, total_articulo / 100.0);
+        }
+    }
+    
+    // Enviar total general
+    MensajeTienda r = (MensajeTienda){0};
+    r.tipo = sendTicket; // Reutilizamos este tipo para el total
+    r.total_cent = total_general;
+    strncpy(r.datos, "Total carrito", sizeof r.datos - 1);
+    sendAll(cli, (const char*)&r, sizeof r);
+    
+    sendEndMsg(cli);
+}
+
 /* ---------------- Dispatcher ---------------- */
 static void mensajeAtender(SOCKET cli, MensajeTienda *msg, Carrito* cart){
     switch(msg->tipo){
@@ -164,6 +198,10 @@ static void mensajeAtender(SOCKET cli, MensajeTienda *msg, Carrito* cart){
             if(rc==0) sendOKMsg(cli,"Carrito actualizado");
             else if(rc==1) sendErrorMsg(cli,"Producto no existe");
             else sendErrorMsg(cli,"Stock insuficiente");
+        } break;
+        case CMD_CART: {
+            printf("Solicitud de ver carrito\n");
+            mostrarCarrito(cli, cart);
         } break;
         case CMD_CHECK: {
             uint32_t total=0; int rc = checkout(cart, &total);
