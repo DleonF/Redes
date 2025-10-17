@@ -1,117 +1,149 @@
-import java.net.*;
-import java.io.*;
-import javafx.scene.media.Media;
-import javafx.scene.media.MediaPlayer;
-import javafx.embed.swing.JFXPanel;
+import java.io.File;
+import java.net.DatagramPacket;
+import java.net.InetAddress;
+import java.net.MulticastSocket;
 
-public class AudioServer {
-    private MediaPlayer mediaPlayer;
-    private ServerSocket serverSocket;
-    
-    public AudioServer() {
-        new JFXPanel(); // Inicializar JavaFX
-    }
-    
-    public void startServer(int port) {
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.Clip;
+
+public class Servidor {
+    private MulticastSocket serverSocket;
+    private InetAddress multicastGroup;
+    private Clip audioClip;
+    private boolean isPlaying = false;
+
+    public Servidor() {
         try {
-            serverSocket = new ServerSocket(port);
-            System.out.println("Servidor de audio iniciado en puerto: " + port);
-            
-            while (true) {
-                Socket clientSocket = serverSocket.accept();
-                new ClientHandler(clientSocket).start();
-            }
-        } catch (IOException e) {
+            // Configuración multicast
+            serverSocket = new MulticastSocket(7777);
+            serverSocket.setReuseAddress(true);
+            serverSocket.setTimeToLive(255);
+            multicastGroup = InetAddress.getByName("ff3e:40:2001::1");
+
+            System.out.println("Servidor de Audio Multicast iniciado...");
+            System.out.println("Grupo: " + multicastGroup + ", Puerto: 7777");
+
+            // SOLUCIÓN SIMPLIFICADA - Evitar joinGroup completamente
+            System.out.println("Configurado para enviar/recepcionar multicast sin unirse al grupo");
+
+            loadAudioFile("audio.wav");
+            listenForCommands();
+
+        } catch (Exception e) {
+            System.err.println("Error iniciando servidor: " + e.getMessage());
             e.printStackTrace();
         }
     }
     
-    private class ClientHandler extends Thread {
-        private Socket clientSocket;
-        
-        public ClientHandler(Socket socket) {
-            this.clientSocket = socket;
-        }
-        
-        public void run() {
-            try (
-                BufferedReader in = new BufferedReader(
-                    new InputStreamReader(clientSocket.getInputStream()));
-                PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)
-            ) {
-                String command;
-                while ((command = in.readLine()) != null) {
-                    System.out.println("Comando recibido: " + command);
-                    
-                    switch (command) {
-                        case "PLAY":
-                            playMP3("audio.mp3");
-                            out.println("Reproduciendo audio");
-                            break;
-                        case "PAUSE":
-                            pausePlayback();
-                            out.println("Reproducción pausada");
-                            break;
-                        case "STOP":
-                            stopPlayback();
-                            out.println("Reproducción detenida");
-                            break;
-                        case "VOLUME_UP":
-                            setVolume(1.0);
-                            out.println("Volumen máximo");
-                            break;
-                        case "VOLUME_DOWN":
-                            setVolume(0.3);
-                            out.println("Volumen bajo");
-                            break;
-                        default:
-                            out.println("Comando no reconocido");
-                    }
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+    private void loadAudioFile(String filename) {
+        try {
+            AudioInputStream audioStream = AudioSystem.getAudioInputStream(
+                new File(filename));
+            audioClip = AudioSystem.getClip();
+            audioClip.open(audioStream);
+            System.out.println("Audio cargado: " + filename);
+        } catch (Exception e) {
+            System.err.println("Error cargando audio: " + e.getMessage());
         }
     }
     
-    // Métodos de reproducción (iguales a los anteriores)
-    public void playMP3(String filePath) {
+    private void listenForCommands() {
         try {
-            if (mediaPlayer != null) {
-                mediaPlayer.stop();
-                mediaPlayer.dispose();
+            byte[] buffer = new byte[1024];
+            
+            while (true) {
+                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                serverSocket.receive(packet);
+                
+                String command = new String(packet.getData(), 0, packet.getLength()).trim();
+                String clientInfo = packet.getAddress() + ":" + packet.getPort();
+                
+                System.out.println("Comando recibido desde " + clientInfo + ": " + command);
+                
+                processCommand(command, packet.getAddress(), packet.getPort());
+            }
+        } catch (Exception e) {
+            System.err.println("Error recibiendo comandos: " + e.getMessage());
+        }
+    }
+    
+    private void processCommand(String command, InetAddress clientAddress, int clientPort) {
+        try {
+            String response = "";
+            
+            if (audioClip == null) {
+                response = "Error: Audio no disponible";
+                sendResponse(response, clientAddress, clientPort);
+                return;
             }
             
-            String mediaPath = new File(filePath).toURI().toString();
-            Media media = new Media(mediaPath);
-            mediaPlayer = new MediaPlayer(media);
+            switch (command.toUpperCase()) {
+                case "PLAY":
+                    if (!isPlaying) {
+                        audioClip.start();
+                        isPlaying = true;
+                        response = "Reproduciendo audio";
+                    } else {
+                        response = "El audio ya se está reproduciendo";
+                    }
+                    break;
+                    
+                case "PAUSE":
+                    if (isPlaying) {
+                        audioClip.stop();
+                        isPlaying = false;
+                        response = "Audio pausado";
+                    } else {
+                        response = "El audio ya está pausado";
+                    }
+                    break;
+                    
+                case "STOP":
+                    audioClip.stop();
+                    audioClip.setFramePosition(0);
+                    isPlaying = false;
+                    response = "Audio detenido y reiniciado";
+                    break;
+                    
+                case "RESTART":
+                    audioClip.setFramePosition(0);
+                    if (!isPlaying) {
+                        audioClip.start();
+                        isPlaying = true;
+                    }
+                    response = "Audio reiniciado desde el inicio";
+                    break;
+                    
+                case "STATUS":
+                    response = isPlaying ? "Estado: Reproduciendo" : "Estado: Pausado";
+                    break;
+                    
+                default:
+                    response = "Comando no reconocido: " + command;
+            }
             
-            mediaPlayer.setOnEndOfMedia(() -> {
-                System.out.println("Reproducción finalizada automáticamente");
-            });
-            
-            mediaPlayer.play();
-            System.out.println("Reproduciendo: " + filePath);
+            sendResponse(response, clientAddress, clientPort);
             
         } catch (Exception e) {
-            System.err.println("Error: " + e.getMessage());
+            System.err.println("Error procesando comando: " + e.getMessage());
         }
     }
     
-    public void pausePlayback() {
-        if (mediaPlayer != null) mediaPlayer.pause();
-    }
-    
-    public void stopPlayback() {
-        if (mediaPlayer != null) mediaPlayer.stop();
-    }
-    
-    public void setVolume(double volume) {
-        if (mediaPlayer != null) mediaPlayer.setVolume(volume);
+    private void sendResponse(String message, InetAddress clientAddress, int clientPort) {
+        try {
+            byte[] responseData = message.getBytes();
+            DatagramPacket responsePacket = new DatagramPacket(
+                responseData, responseData.length, clientAddress, clientPort);
+            serverSocket.send(responsePacket);
+            
+            System.out.println("Respuesta enviada: " + message);
+        } catch (Exception e) {
+            System.err.println("Error enviando respuesta: " + e.getMessage());
+        }
     }
     
     public static void main(String[] args) {
-        AudioServer server = new AudioServer();
-        server.startServer(8080);
+        new Servidor();
     }
 }
