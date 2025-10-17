@@ -69,7 +69,7 @@ void listar(SOCKET s, const char *tipo){
     }
 }
 
-void agregar(SOCKET s, int id, int cantidad){
+void agregar(SOCKET s, int id, int cantidad) {
     MensajeTienda msg = (MensajeTienda){0};
     msg.tipo = CMD_ADD;
     msg.id_articulo = id;
@@ -78,7 +78,137 @@ void agregar(SOCKET s, int id, int cantidad){
 
     MensajeTienda resp;
     if(recvAll(s, (char*)&resp, sizeof resp) <0) return;
-    printf("%s\n", resp.datos);
+    
+    // Mensajes más descriptivos
+    if (cantidad == 0) {
+        if (resp.tipo == sendOK) {
+            printf("✅ Artículo eliminado del carrito\n");
+        } else {
+            printf("Error: %s\n", resp.datos);
+        }
+    } else {
+        printf("%s\n", resp.datos);
+    }
+}
+
+void verCarrito(SOCKET s) {
+    MensajeTienda msg = (MensajeTienda){0};
+    msg.tipo = CMD_CART;
+    sendAll(s, (const char*)&msg, sizeof msg);
+
+    MensajeTienda resp;
+    uint32_t total_general = 0;
+    int tiene_items = 0;
+    int items[64] = {0}; // Para almacenar IDs mostrados
+    int item_count = 0;
+    
+    printf("\n=== MI CARRITO ===\n");
+    
+    // Primera pasada: mostrar items
+    while (1) {
+        if(recvAll(s, (char*)&resp, sizeof resp) < 0) break;
+        if(resp.tipo == sendEnd) break;
+        
+        if(resp.tipo == sendCartItem) {
+            tiene_items = 1;
+            items[item_count] = resp.articulo.id;
+            printf("%d. ID:%d | %s (%s) | $%.2f x %d = $%.2f\n",
+                   item_count + 1,  // Número para eliminar
+                   resp.articulo.id, resp.articulo.nombre, resp.articulo.marca,
+                   resp.articulo.precio_cent / 100.0, resp.cantidad,
+                   resp.total_articulo / 100.0);
+            item_count++;
+        }
+        else if(resp.tipo == sendTicket) {
+            total_general = resp.total_cent;
+            printf("-----------------------------------\n");
+            printf("Total: $%.2f\n", total_general / 100.0);
+        }
+    }
+    
+    if (!tiene_items) {
+        printf("Carrito vacío\n");
+        printf("==================\n\n");
+        return;
+    }
+    
+    printf("==================\n\n");
+    
+    // Menú de opciones para el carrito
+    int opcion_carrito;
+    do {
+        printf("Opciones del carrito:\n");
+        printf("1. Eliminar articulo\n");
+        printf("2. Modificar cantidad\n");
+        printf("3. Volver al menu principal\n");
+        printf("Seleccione una opcion: ");
+        scanf("%d", &opcion_carrito);
+        scanf("%*c"); // Limpiar buffer
+        
+        switch(opcion_carrito) {
+            case 1: {
+                // Eliminar artículo
+                if (item_count == 0) {
+                    printf("Carrito vacio\n");
+                    break;
+                }
+                
+                int num_eliminar;
+                printf("Ingrese el numero del articulo a eliminar (1-%d): ", item_count);
+                scanf("%d", &num_eliminar);
+                scanf("%*c");
+                
+                if (num_eliminar >= 1 && num_eliminar <= item_count) {
+                    int id_eliminar = items[num_eliminar - 1];
+                    // Enviar comando para eliminar (cantidad = 0)
+                    agregar(s, id_eliminar, 0);
+                    printf("Articulo eliminado del carrito.\n");
+                    return; // Volver a cargar el carrito
+                } else {
+                    printf("Numero invalido.\n");
+                }
+                break;
+            }
+            case 2: {
+                // Modificar cantidad
+                if (item_count == 0) {
+                    printf("Carrito vacio\n");
+                    break;
+                }
+                
+                int num_modificar, nueva_cantidad;
+                printf("Ingrese el numero del articulo a modificar (1-%d): ", item_count);
+                scanf("%d", &num_modificar);
+                printf("Ingrese la nueva cantidad (0 para eliminar): ");
+                scanf("%d", &nueva_cantidad);
+                scanf("%*c");
+                
+                if (num_modificar >= 1 && num_modificar <= item_count) {
+                    int id_modificar = items[num_modificar - 1];
+                    if (nueva_cantidad >= 0) {
+                        agregar(s, id_modificar, nueva_cantidad);
+                        if (nueva_cantidad == 0) {
+                            printf("Articulo eliminado del carrito.\n");
+                        } else {
+                            printf("Cantidad actualizada.\n");
+                        }
+                        return; // Volver a cargar el carrito
+                    } else {
+                        printf("Cantidad invalida.\n");
+                    }
+                } else {
+                    printf("Numero invalido.\n");
+                }
+                break;
+            }
+            case 3:
+                printf("Volviendo al menu principal...\n");
+                break;
+            default:
+                printf("Opcion no valida.\n");
+                break;
+        }
+    } while (opcion_carrito != 3);
 }
 
 void finalizar(SOCKET s){
@@ -98,6 +228,8 @@ void finalizar(SOCKET s){
 }
 
 int main(int argc, char *argv[]){
+    int Opcion;
+    char texto[64];
     if(argc < 3){
         printf("Uso: %s <IP> <PUERTO>\n", argv[0]);
         return 1;
@@ -116,12 +248,49 @@ int main(int argc, char *argv[]){
     if(connect(s, (struct sockaddr*)&srv, sizeof(srv)) == SOCKET_ERROR) error("connect");
 
     printf("Conectado al servidor.\n");
-
-    buscar(s, "Laptop");
-    listar(s, "Electronica");
-    agregar(s, 1, 2);
-    finalizar(s);
-
+    while (1) {
+        printf("Bienvenido a la tienda en linea.\n");
+        printf("Ingrese lo que desea hacer:\n");
+        printf("1. Buscar productos (ejemplo: Laptop)\n");
+        printf("2. Listar productos por tipo (ejemplo: Electronica)\n");
+        printf("3. Agregar producto al carrito (ejemplo: 1 2)\n");
+        printf("4. Ver carrito\n");
+        printf("5. Finalizar compra\n");
+        scanf("%d", &Opcion);
+        switch (Opcion){
+        case 1:
+            scanf("%*c"); // Lee el \n al ingresar una opcion y lo desecha
+            printf("Ingrese el texto a buscar:\n");
+            fgets(texto, sizeof(texto), stdin);
+            texto[strcspn(texto, "\n")] = 0; // Eliminar el salto de línea
+            buscar(s, texto);
+            break;
+        case 2:
+            scanf("%*c"); // Lee el \n al ingresar una opcion y lo desecha
+            printf("Ingrese el tipo de producto a listar:\n");
+            fgets(texto, sizeof(texto), stdin);
+            texto[strcspn(texto, "\n")] = 0; // Eliminar el salto de línea
+            listar(s, texto);
+            break;
+        case 3:
+            scanf("%*c"); // Lee el \n al ingresar una opcion y lo desecha
+            int id, cantidad;
+            printf("Ingrese el ID del producto y la cantidad a agregar:\n");
+            scanf("%d %d", &id, &cantidad);
+            agregar(s, id, cantidad);
+            break;
+        case 4:
+            scanf("%*c");
+            verCarrito(s);
+            break;
+        case 5:
+            scanf("%*c"); // Lee el \n al ingresar una opcion y lo desecha
+            finalizar(s);
+            break;
+        default:
+            break;
+        }
+    }
     closesocket(s);
     WSACleanup();
     return 0;
