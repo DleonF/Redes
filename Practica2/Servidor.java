@@ -1,11 +1,6 @@
+import java.net.*;
+import javax.sound.sampled.*;
 import java.io.File;
-import java.net.DatagramPacket;
-import java.net.InetAddress;
-import java.net.MulticastSocket;
-
-import javax.sound.sampled.AudioInputStream;
-import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.Clip;
 
 public class Servidor {
     private MulticastSocket serverSocket;
@@ -15,7 +10,6 @@ public class Servidor {
 
     public Servidor() {
         try {
-            // Configuración multicast
             serverSocket = new MulticastSocket(7777);
             serverSocket.setReuseAddress(true);
             serverSocket.setTimeToLive(255);
@@ -23,9 +17,6 @@ public class Servidor {
 
             System.out.println("Servidor de Audio Multicast iniciado...");
             System.out.println("Grupo: " + multicastGroup + ", Puerto: 7777");
-
-            // SOLUCIÓN SIMPLIFICADA - Evitar joinGroup completamente
-            System.out.println("Configurado para enviar/recepcionar multicast sin unirse al grupo");
 
             loadAudioFile("audio.wav");
             listenForCommands();
@@ -79,6 +70,17 @@ public class Servidor {
             }
             
             switch (command.toUpperCase()) {
+                case "CONNECT":
+                    // Al conectarse, reproducir automáticamente
+                    if (!isPlaying) {
+                        audioClip.start();
+                        isPlaying = true;
+                        response = "Conectado - Reproduciendo audio automáticamente";
+                    } else {
+                        response = "Conectado - Audio ya se está reproduciendo";
+                    }
+                    break;
+                    
                 case "PLAY":
                     if (!isPlaying) {
                         audioClip.start();
