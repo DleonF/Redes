@@ -1,6 +1,11 @@
-import java.net.*;
-import javax.sound.sampled.*;
 import java.io.File;
+import java.net.DatagramPacket;
+import java.net.InetAddress;
+import java.net.MulticastSocket;
+
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.Clip;
 
 public class Servidor {
     private MulticastSocket serverSocket;
@@ -10,15 +15,17 @@ public class Servidor {
 
     public Servidor() {
         try {
+            multicastGroup = InetAddress.getByName("ff3e:40:2001::1");
             serverSocket = new MulticastSocket(7777);
+            serverSocket.joinGroup(multicastGroup);
             serverSocket.setReuseAddress(true);
             serverSocket.setTimeToLive(255);
-            multicastGroup = InetAddress.getByName("ff3e:40:2001::1");
 
             System.out.println("Servidor de Audio Multicast iniciado...");
             System.out.println("Grupo: " + multicastGroup + ", Puerto: 7777");
+            System.out.println("Unido al grupo multicast correctamente");
 
-            loadAudioFile("audio.wav");
+            loadAudioFile("C:\\Users\\HP\\Documents\\Uni\\Redes 2\\Redes\\Practica2\\Prueba.wav");
             listenForCommands();
 
         } catch (Exception e) {
@@ -27,21 +34,34 @@ public class Servidor {
         }
     }
     
-    private void loadAudioFile(String filename) {
+    private void loadAudioFile(String filename) { 
         try {
-            AudioInputStream audioStream = AudioSystem.getAudioInputStream(
-                new File(filename));
+            File audioFile = new File(filename);
+            if (!audioFile.exists()) {
+                System.err.println("Archivo no encontrado: " + filename);
+                return;
+            }
+            
+            System.out.println("Cargando archivo: " + filename);
+            System.out.println("Tamaño: " + audioFile.length() + " bytes");
+            
+            AudioInputStream audioStream = AudioSystem.getAudioInputStream(audioFile);
             audioClip = AudioSystem.getClip();
             audioClip.open(audioStream);
             System.out.println("Audio cargado: " + filename);
+            
         } catch (Exception e) {
             System.err.println("Error cargando audio: " + e.getMessage());
+            if (e instanceof javax.sound.sampled.UnsupportedAudioFileException) {
+                System.err.println("Formato de audio no soportado. Use archivos WAV compatibles.");
+            }
         }
     }
     
     private void listenForCommands() {
         try {
             byte[] buffer = new byte[1024];
+            System.out.println("Escuchando comandos multicast...");
             
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
@@ -71,7 +91,6 @@ public class Servidor {
             
             switch (command.toUpperCase()) {
                 case "CONNECT":
-                    // Al conectarse, reproducir automáticamente
                     if (!isPlaying) {
                         audioClip.start();
                         isPlaying = true;
