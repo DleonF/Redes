@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <winsock2.h>
-#include <ws2tcpip.h>         // <-- inet_pton
+#include <ws2tcpip.h>         
 #include "modelos.h"
 
 #pragma comment(lib, "ws2_32.lib")
@@ -104,7 +104,6 @@ void verCarrito(SOCKET s) {
     
     printf("\n=== MI CARRITO ===\n");
     
-    // Primera pasada: mostrar items
     while (1) {
         if(recvAll(s, (char*)&resp, sizeof resp) < 0) break;
         if(resp.tipo == sendEnd) break;
@@ -160,10 +159,9 @@ void verCarrito(SOCKET s) {
                 
                 if (num_eliminar >= 1 && num_eliminar <= item_count) {
                     int id_eliminar = items[num_eliminar - 1];
-                    // Enviar comando para eliminar (cantidad = 0)
                     agregar(s, id_eliminar, 0);
                     printf("Articulo eliminado del carrito.\n");
-                    return; // Volver a cargar el carrito
+                    return; 
                 } else {
                     printf("Numero invalido.\n");
                 }
@@ -222,7 +220,7 @@ void finalizar(SOCKET s){
         if(resp.tipo == sendOK)
             printf("%s\n", resp.datos);
         else if(resp.tipo == sendTicket)
-            printf("Folio: %u | Total: $%.2f\n", resp.folio, resp.total_cent / 100.0); // %u mejor para uint32_t
+            printf("Folio: %u | Total: $%.2f\n", resp.folio, resp.total_cent / 100.0);
         else break;
     }
 }
@@ -240,7 +238,7 @@ int main(int argc, char *argv[]){
     SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
     if(s == INVALID_SOCKET) error("socket");
 
-    struct sockaddr_in srv; memset(&srv, 0, sizeof srv); // <-- limpia la estructura
+    struct sockaddr_in srv; memset(&srv, 0, sizeof srv); 
     srv.sin_family = AF_INET;
     srv.sin_port = htons((u_short)atoi(argv[2]));
     if(inet_pton(AF_INET, argv[1], &srv.sin_addr) != 1) error("inet_pton");
@@ -259,21 +257,20 @@ int main(int argc, char *argv[]){
         scanf("%d", &Opcion);
         switch (Opcion){
         case 1:
-            scanf("%*c"); // Lee el \n al ingresar una opcion y lo desecha
+            scanf("%*c"); 
             printf("Ingrese el texto a buscar:\n");
             fgets(texto, sizeof(texto), stdin);
-            texto[strcspn(texto, "\n")] = 0; // Eliminar el salto de línea
-            buscar(s, texto);
+            texto[strcspn(texto, "\n")] = 0; 
             break;
         case 2:
-            scanf("%*c"); // Lee el \n al ingresar una opcion y lo desecha
+            scanf("%*c"); 
             printf("Ingrese el tipo de producto a listar:\n");
             fgets(texto, sizeof(texto), stdin);
-            texto[strcspn(texto, "\n")] = 0; // Eliminar el salto de línea
+            texto[strcspn(texto, "\n")] = 0; 
             listar(s, texto);
             break;
         case 3:
-            scanf("%*c"); // Lee el \n al ingresar una opcion y lo desecha
+            scanf("%*c"); 
             int id, cantidad;
             printf("Ingrese el ID del producto y la cantidad a agregar:\n");
             scanf("%d %d", &id, &cantidad);
@@ -284,7 +281,7 @@ int main(int argc, char *argv[]){
             verCarrito(s);
             break;
         case 5:
-            scanf("%*c"); // Lee el \n al ingresar una opcion y lo desecha
+            scanf("%*c"); 
             finalizar(s);
             break;
         default:
