@@ -1,18 +1,16 @@
-import java.io.File;
 import java.net.DatagramPacket;
 import java.net.InetAddress;
 import java.net.MulticastSocket;
-
-import javax.sound.sampled.AudioInputStream;
-import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.Clip;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class Servidor {
     private MulticastSocket serverSocket;
     private InetAddress multicastGroup;
-    private Clip audioClip;
-    private boolean isPlaying = false;
-
+    private int nextExpectedSeq = 0;
+    private Map<Integer, String> receivedCommands = new ConcurrentHashMap<>();
+    
     public Servidor() {
         try {
             multicastGroup = InetAddress.getByName("ff3e:40:2001::1");
@@ -21,11 +19,10 @@ public class Servidor {
             serverSocket.setReuseAddress(true);
             serverSocket.setTimeToLive(255);
 
-            System.out.println("Servidor de Audio Multicast iniciado...");
+            System.out.println("Servidor de Audio con Ventana Deslizante iniciado...");
             System.out.println("Grupo: " + multicastGroup + ", Puerto: 7777");
-            System.out.println("Unido al grupo multicast correctamente");
+            System.out.println("Esperando comandos con ventana deslizante...");
 
-            loadAudioFile("C:\\Users\\HP\\Documents\\Uni\\Redes 2\\Redes\\Practica2\\Prueba.wav");
             listenForCommands();
 
         } catch (Exception e) {
@@ -33,134 +30,142 @@ public class Servidor {
             e.printStackTrace();
         }
     }
-    
-    private void loadAudioFile(String filename) { 
-        try {
-            File audioFile = new File(filename);
-            if (!audioFile.exists()) {
-                System.err.println("Archivo no encontrado: " + filename);
-                return;
+
+    public static class Mensaje {
+        private int sequenceNumber;
+        private int ackNumber;
+        private String comando;
+        private long timestamp;
+        
+        public Mensaje(int seq, int ack, String cmd) {
+            this.sequenceNumber = seq;
+            this.ackNumber = ack;
+            this.comando = cmd;
+            this.timestamp = System.currentTimeMillis();
+        }
+        
+        public int getSequenceNumber() { return sequenceNumber; }
+        public int getAckNumber() { return ackNumber; }
+        public String getComando() { return comando; }
+        public long getTimestamp() { return timestamp; }
+        
+        public byte[] toBytes() {
+            String data = sequenceNumber + ":" + ackNumber + ":" + comando;
+            return data.getBytes();
+        }
+        
+        public static Mensaje fromBytes(byte[] data) {
+            try {
+                String str = new String(data).trim();
+                String[] parts = str.split(":", 3);
+                if (parts.length == 3) {
+                    return new Mensaje(
+                        Integer.parseInt(parts[0]),
+                        Integer.parseInt(parts[1]),
+                        parts[2]
+                    );
+                }
+            } catch (Exception e) {
+                System.err.println("Error parseando mensaje: " + new String(data));
             }
-            
-            System.out.println("Cargando archivo: " + filename);
-            System.out.println("Tamaño: " + audioFile.length() + " bytes");
-            
-            AudioInputStream audioStream = AudioSystem.getAudioInputStream(audioFile);
-            audioClip = AudioSystem.getClip();
-            audioClip.open(audioStream);
-            System.out.println("Audio cargado: " + filename);
-            
-        } catch (Exception e) {
-            System.err.println("Error cargando audio: " + e.getMessage());
-            if (e instanceof javax.sound.sampled.UnsupportedAudioFileException) {
-                System.err.println("Formato de audio no soportado. Use archivos WAV compatibles.");
-            }
+            return null;
         }
     }
     
     private void listenForCommands() {
         try {
             byte[] buffer = new byte[1024];
-            System.out.println("Escuchando comandos multicast...");
             
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 serverSocket.receive(packet);
                 
-                String command = new String(packet.getData(), 0, packet.getLength()).trim();
-                String clientInfo = packet.getAddress() + ":" + packet.getPort();
-                
-                System.out.println("Comando recibido desde " + clientInfo + ": " + command);
-                
-                processCommand(command, packet.getAddress(), packet.getPort());
+                Mensaje mensaje = Mensaje.fromBytes(Arrays.copyOf(packet.getData(), packet.getLength()));
+                if (mensaje != null) {
+                    procesarMensaje(mensaje, packet.getAddress(), packet.getPort());
+                } else {
+                    System.err.println("Mensaje no valido recibido");
+                }
             }
         } catch (Exception e) {
             System.err.println("Error recibiendo comandos: " + e.getMessage());
         }
     }
     
-    private void processCommand(String command, InetAddress clientAddress, int clientPort) {
-        try {
-            String response = "";
+    private void procesarMensaje(Mensaje mensaje, InetAddress clientAddress, int clientPort) {
+        int seqNumber = mensaje.getSequenceNumber();
+        String comando = mensaje.getComando();
+        
+        System.out.println("Mensaje recibido: " + comando + " [Seq:" + seqNumber + "]");
+        
+        if (seqNumber == nextExpectedSeq) {
+            System.out.println("Secuencia esperada, procesando inmediatamente...");
+            procesarYResponderComando(comando, clientAddress, clientPort, seqNumber);
+            nextExpectedSeq++;
             
-            if (audioClip == null) {
-                response = "Error: Audio no disponible";
-                sendResponse(response, clientAddress, clientPort);
-                return;
-            }
+            procesarBufferComandos(clientAddress, clientPort);
             
-            switch (command.toUpperCase()) {
-                case "CONNECT":
-                    if (!isPlaying) {
-                        audioClip.start();
-                        isPlaying = true;
-                        response = "Conectado - Reproduciendo audio automáticamente";
-                    } else {
-                        response = "Conectado - Audio ya se está reproduciendo";
-                    }
-                    break;
-                    
-                case "PLAY":
-                    if (!isPlaying) {
-                        audioClip.start();
-                        isPlaying = true;
-                        response = "Reproduciendo audio";
-                    } else {
-                        response = "El audio ya se está reproduciendo";
-                    }
-                    break;
-                    
-                case "PAUSE":
-                    if (isPlaying) {
-                        audioClip.stop();
-                        isPlaying = false;
-                        response = "Audio pausado";
-                    } else {
-                        response = "El audio ya está pausado";
-                    }
-                    break;
-                    
-                case "STOP":
-                    audioClip.stop();
-                    audioClip.setFramePosition(0);
-                    isPlaying = false;
-                    response = "Audio detenido y reiniciado";
-                    break;
-                    
-                case "RESTART":
-                    audioClip.setFramePosition(0);
-                    if (!isPlaying) {
-                        audioClip.start();
-                        isPlaying = true;
-                    }
-                    response = "Audio reiniciado desde el inicio";
-                    break;
-                    
-                case "STATUS":
-                    response = isPlaying ? "Estado: Reproduciendo" : "Estado: Pausado";
-                    break;
-                    
-                default:
-                    response = "Comando no reconocido: " + command;
-            }
+        } else if (seqNumber > nextExpectedSeq) {
+            receivedCommands.put(seqNumber, comando);
+            System.out.println("Comando almacenado en buffer [Seq:" + seqNumber + "]");
+            System.out.println("Buffer size: " + receivedCommands.size());
             
-            sendResponse(response, clientAddress, clientPort);
+            enviarACK(nextExpectedSeq - 1, "BUFFERED", clientAddress, clientPort);
             
-        } catch (Exception e) {
-            System.err.println("Error procesando comando: " + e.getMessage());
+        } else {
+            System.out.println("Comando duplicado [Seq:" + seqNumber + "], reenviando ACK");
+            enviarACK(seqNumber, "DUPLICADO", clientAddress, clientPort);
         }
     }
     
-    private void sendResponse(String message, InetAddress clientAddress, int clientPort) {
+    private void procesarBufferComandos(InetAddress clientAddress, int clientPort) {
+        while (receivedCommands.containsKey(nextExpectedSeq)) {
+            String comando = receivedCommands.remove(nextExpectedSeq);
+            System.out.println("Procesando comando del buffer [Seq:" + nextExpectedSeq + "]");
+            procesarYResponderComando(comando, clientAddress, clientPort, nextExpectedSeq);
+            nextExpectedSeq++;
+        }
+    }
+    
+    private void procesarYResponderComando(String comando, InetAddress clientAddress, int clientPort, int seqNumber) {
+        String respuesta = "";
+        
+        switch (comando.toUpperCase()) {
+            case "CONNECT":
+                respuesta = "Conectado - Servidor listo";
+                break;
+            case "PLAY":
+                respuesta = "Comando PLAY recibido y procesado";
+                break;
+            case "PAUSE":
+                respuesta = "Comando PAUSE recibido y procesado";
+                break;
+            case "STOP":
+                respuesta = "Comando STOP recibido y procesado";
+                break;
+            case "RESTART":
+                respuesta = "Comando RESTART recibido y procesado";
+                break;
+            case "STATUS":
+                respuesta = "Servidor funcionando - Esperando comandos";
+                break;
+            default:
+                respuesta = "Comando no reconocido: " + comando;
+        }
+        
+        enviarACK(seqNumber, respuesta, clientAddress, clientPort);
+        System.out.println("Procesado: " + comando + " [Seq:" + seqNumber + "] -> " + respuesta);
+    }
+    
+    private void enviarACK(int ackNumber, String mensaje, InetAddress clientAddress, int clientPort) {
         try {
-            byte[] responseData = message.getBytes();
-            DatagramPacket responsePacket = new DatagramPacket(
-                responseData, responseData.length, clientAddress, clientPort);
-            serverSocket.send(responsePacket);
-            
-            System.out.println("Respuesta enviada: " + message);
+            Mensaje ack = new Mensaje(0, ackNumber, "ACK:" + mensaje);
+            byte[] ackData = ack.toBytes();
+            DatagramPacket ackPacket = new DatagramPacket(ackData, ackData.length, clientAddress, clientPort);
+            serverSocket.send(ackPacket);
+            System.out.println("ACK enviado: " + ackNumber + " -> " + mensaje);
         } catch (Exception e) {
-            System.err.println("Error enviando respuesta: " + e.getMessage());
+            System.err.println("Error enviando ACK: " + e.getMessage());
         }
     }
     
