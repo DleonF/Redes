@@ -62,7 +62,6 @@ public class Cliente {
         }
     }
     
-    // Ventana deslizante
     private int nextSeqNumber = 0;
     private int windowSize = 6;
     private Map<Integer, Mensaje> sentMessages = new ConcurrentHashMap<>();
@@ -79,7 +78,7 @@ public class Cliente {
             socket = new DatagramSocket();
             multicastGroup = InetAddress.getByName("ff3e:40:2001::1");
             
-            System.out.println("Cliente de Audio con Ventana Deslizante iniciado...");
+            System.out.println("Cliente de Audio iniciado...");
             System.out.println("Tamaño de ventana: " + windowSize);
             
             cargarAudioLocal();
@@ -117,10 +116,9 @@ public class Cliente {
 
     private void demostrarVentanaDeslizante() {
     System.out.println("\n=== DEMOSTRACION VENTANA DESLIZANTE ===");
-    System.out.println("Enviando 6 comandos SIN esperar ACKs...");
     System.out.println("Tamaño de ventana: " + windowSize);
     
-    String[] comandos = {"PLAY", "PAUSE", "STOP", "RESTART", "STATUS", "PAUSE"};
+    String[] comandos = {"PLAY", "PAUSE", "RESTART", "STATUS", "PAUSE", "RESTART"};
     
     for (int i = 0; i < comandos.length; i++) {
         String comando = comandos[i];
@@ -161,7 +159,6 @@ public class Cliente {
     private void recibirRespuestas() {
         try {
             byte[] buffer = new byte[1024];
-            System.out.println("Escuchando ACKs del servidor...");
             
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
@@ -182,7 +179,6 @@ public class Cliente {
         
         synchronized (responseLock) {
             System.out.println("\n=== RESPUESTA DEL SERVIDOR ===");
-            System.out.println("ACK recibido para secuencia: " + ackNumber);
             
             if (ackNumber > lastAckReceived) {
                 lastAckReceived = ackNumber;
@@ -191,10 +187,6 @@ public class Cliente {
             int antes = sentMessages.size();
             sentMessages.entrySet().removeIf(entry -> entry.getKey() <= ackNumber);
             int despues = sentMessages.size();
-            
-            if (antes != despues) {
-                System.out.println("Ventana liberada: " + despues + "/" + windowSize + " mensajes en vuelo");
-            }
             
             if (!ack.getComando().startsWith("ACK:")) {
                 String mensajeServidor = ack.getComando().replace("ACK:", "");
@@ -259,7 +251,7 @@ public class Cliente {
             socket.send(packet);
             
             sentMessages.put(currentSeq, mensaje);
-            System.out.println("Enviado: " + comando + " [Seq:" + currentSeq + ", Ventana:" + sentMessages.size() + "/" + windowSize + "]");
+            System.out.println("Enviado: " + comando);
             
         } catch (Exception e) {
             System.err.println("Error enviando comando: " + e.getMessage());
@@ -352,7 +344,6 @@ public class Cliente {
                 return;
         }
         
-        // Enviar comando al servidor con ventana deslizante
         enviarComandoConVentana(comandoUpper);
     }
     
